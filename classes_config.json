@@ -1,0 +1,23 @@
+{
+  "Monday": {
+    "Gym Entry Time":  "06:00"
+  },
+  "Tuesday": {
+    "Gym Entry Time":  "06:00"
+  },
+  "Wednesday": {
+    "Gym Entry Time":  "06:00"
+  },
+  "Thursday": {
+    "Gym Entry Time":  "06:00"
+  },
+  "Friday": {
+    "Gym Entry Time":  "06:00"
+  },
+  "Saturday": {
+    "Gym Entry Time":  "10:00"
+  },
+  "Sunday": {
+    "Gym Entry Time":  "10:00"
+  }
+}
