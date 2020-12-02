@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import re
-import lxml.html
 import json
 import time
 import datetime
@@ -16,19 +15,6 @@ class AutoBooker:
         self.BOOKING_HOUR = self.BOOKING_TIME[:2:]
         # 23 hours and 55 mins
         self.WAIT_A_DAY = 86100
-
-    def strip_token(self, raw_page_data):
-        token_array = []
-        for nLines in raw_page_data.splitlines():
-            if '__RequestVerificationToken' in nLines:
-                token_to_strip = nLines
-                token_array.append(nLines.split("value=\"")[1][:92:])
-        return token_array
-
-    def generate_token(self, data_array):
-        token_value = data_array[1]
-        token_name = '__RequestVerificationToken'
-        return {token_name: token_value}
 
     def extract_timetable(self, page_content):
         html_timetable = ''
@@ -96,12 +82,15 @@ class AutoBooker:
         self.browser_session.get(confirm_booking_url)
         self.browser_session.close()
 
+    def extract_token(self, login_response):
+        return {'__RequestVerificationToken': login_response.cookies['__RequestVerificationToken']}
+
     def login_get_timetable(self):
         self.browser_session = requests.session()
         login_url = "https://gymbox.legendonlineservices.co.uk/enterprise/account/login"
         timetable = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/MemberTimetable'
         page_get = self.browser_session.get(login_url)
-        verification_token = self.generate_token(self.strip_token(page_get.text))
+        verification_token = self.extract_token(page_get)
         self.login_details.update(verification_token)
         page_post = self.browser_session.post(login_url, self.login_details, allow_redirects=True)
         if "Login failed" in page_post.text:
