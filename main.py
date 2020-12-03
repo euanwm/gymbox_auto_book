@@ -1,30 +1,46 @@
-import requests
-from bs4 import BeautifulSoup
+#!/usr/bin/env python
+"""
+Basic script to deal with handling repeat bookings at GymBox franchise.
+"""
 import re
 import json
 import time
 import datetime
+from bs4 import BeautifulSoup
+import requests
 
 
 class AutoBooker:
+    """ Does what is says... """
     def __init__(self):
         self.login_details = {"login.Email": "user@email.com",
                               "login.Password": "password"}
         # Set it to 1031 so that it doesn't jump the gun
-        self.BOOKING_TIME = '10:31'
-        self.BOOKING_HOUR = self.BOOKING_TIME[:2:]
+        self.booking_time = '10:31'
+        self.booking_hour = self.booking_time[:2:]
         # 23 hours and 55 mins
-        self.WAIT_A_DAY = 86100
+        self.wait_a_day = 86100
+        self.browser_session = None
+        self.gymbox_main = 'https://gymbox.legendonlineservices.co.uk/enterprise/'
 
-    def extract_timetable(self, page_content):
-        html_timetable = ''
-        for nLines in page_content.splitlines():
-            if "Gym Entry Time" in nLines:
-                html_timetable = nLines
+    @staticmethod
+    def extract_token(login_response):
+        """ Checks GET response header, returns the verification token to allow a secure login """
+        return {'__RequestVerificationToken': login_response.cookies['__RequestVerificationToken']}
+
+    @staticmethod
+    def extract_timetable(page_content):
+        """ Returns the extracted raw html timetable from the class schedule page """
+        html_timetable = None
+        for line_values in page_content.splitlines():
+            if "Gym Entry Time" in line_values:
+                html_timetable = line_values
         return html_timetable
 
     # make this return a timetable with date, time, booking ID
-    def parse_timetable(self, raw_timetable):
+    @staticmethod
+    def parse_timetable(raw_timetable):
+        """ Takes raw html timetable and converts into an array """
         souper = BeautifulSoup(raw_timetable, 'html.parser')
         parsed_table = souper.find_all('table')
         gym_time = parsed_table[1]
@@ -33,17 +49,15 @@ class AutoBooker:
         date = ''
         class_booking_code = ''
         complete_timetable = []
-        for tr in gym_time:
-            table_row = tr.find_all('td')
+        for table_row in gym_time:
+            table_row = table_row.find_all('td')
             first_col = re.split('[><]', str(table_row[0]))
-            # '''
             # Time slots
             if len(first_col) == 13:
                 time_slot = first_col[4]
             # Date
             elif len(first_col) == 11:
                 date = first_col[6][2::]
-            # '''
             if len(table_row) > 1:
                 second_col = re.split('[><]', str(table_row[1]))
                 third_col = re.split('[><]', str(table_row[6]))
@@ -57,6 +71,7 @@ class AutoBooker:
         return complete_timetable
 
     def booking_handler(self, timetable_data):
+        """ Checks timetable data against the classes marked for booking and makes the booking """
         json_file = open('classes_config.json')
         my_classes = json.load(json_file)
 
@@ -64,6 +79,7 @@ class AutoBooker:
         future_date = (datetime.datetime.today() + seven_days).strftime('%d %B %Y')
         future_day_name = datetime.datetime.today().strftime('%A')
 
+        # ToDo: Refactor to reduce line length
         for timetable_entry in timetable_data:
             if future_day_name in my_classes:
                 if list(my_classes[future_day_name].keys())[0] == timetable_entry[2]:
@@ -74,21 +90,19 @@ class AutoBooker:
         json_file.close()
 
     def book_class(self, class_data):
-        # Below is how the site makes bookings
-        booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/AddBooking?booking='
-        confirm_booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/Basket/Pay'
+        """ Completes the booking and closes the browser session """
+        booking_url = self.gymbox_main + 'BookingsCentre/AddBooking?booking='
+        confirm_booking_url = self.gymbox_main + 'Basket/Pay'
         print(f"BOOKING : {class_data[2]} at {class_data[1]} on {class_data[0]}")
         self.browser_session.get(f'{booking_url}{class_data[3]}')
         self.browser_session.get(confirm_booking_url)
         self.browser_session.close()
 
-    def extract_token(self, login_response):
-        return {'__RequestVerificationToken': login_response.cookies['__RequestVerificationToken']}
-
     def login_get_timetable(self):
+        """ Logs into the members portal and extracts the raw timetable """
         self.browser_session = requests.session()
-        login_url = "https://gymbox.legendonlineservices.co.uk/enterprise/account/login"
-        timetable = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/MemberTimetable'
+        login_url = self.gymbox_main + "account/login"
+        timetable = self.gymbox_main + 'BookingsCentre/MemberTimetable'
         page_get = self.browser_session.get(login_url)
         verification_token = self.extract_token(page_get)
         self.login_details.update(verification_token)
@@ -99,22 +113,22 @@ class AutoBooker:
         return self.browser_session.get(timetable).text
 
     def main(self):
-        # Check/wait loop
+        """ Main running loop, duh """
         while True:
             cur_time = time.strftime('%H:%M')
-            if self.BOOKING_TIME == cur_time:
+            if self.booking_time == cur_time:
                 raw_timetable = self.login_get_timetable()
                 booking_timetable = self.parse_timetable(raw_timetable)
                 self.booking_handler(booking_timetable)
                 print("BOOKED - Waiting until tomorrow...")
-                time.sleep(self.WAIT_A_DAY)
+                time.sleep(self.wait_a_day)
             # Waits on the run-up of the booking window
-            elif self.BOOKING_HOUR == time.strftime('%H'):
+            elif self.booking_hour == time.strftime('%H'):
                 print("Almost time to book...")
                 time.sleep(10)
             # Captures the initial startup
             else:
-                print(f"Waiting until {self.BOOKING_TIME}...")
+                print(f"Waiting until {self.booking_time}...")
                 time.sleep(30)
 
 
