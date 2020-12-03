@@ -8,13 +8,13 @@ import time
 import datetime
 from bs4 import BeautifulSoup
 import requests
-
+import os
 
 class AutoBooker:
     """ Does what is says... """
-    def __init__(self):
-        self.login_details = {"login.Email": "user@email.com",
-                              "login.Password": "password"}
+    def __init__(self, email, password):
+        self.email = email
+        self.password = password
         # Set it to 1031 so that it doesn't jump the gun
         self.booking_time = '10:31'
         self.booking_hour = self.booking_time[:2:]
@@ -22,11 +22,6 @@ class AutoBooker:
         self.wait_a_day = 86100
         self.browser_session = None
         self.gymbox_main = 'https://gymbox.legendonlineservices.co.uk/enterprise/'
-
-    @staticmethod
-    def extract_token(login_response):
-        """ Checks GET response header, returns the verification token to allow a secure login """
-        return {'__RequestVerificationToken': login_response.cookies['__RequestVerificationToken']}
 
     @staticmethod
     def extract_timetable(page_content):
@@ -103,13 +98,16 @@ class AutoBooker:
         self.browser_session = requests.session()
         login_url = self.gymbox_main + "account/login"
         timetable = self.gymbox_main + 'BookingsCentre/MemberTimetable'
-        page_get = self.browser_session.get(login_url)
-        verification_token = self.extract_token(page_get)
-        self.login_details.update(verification_token)
-        page_post = self.browser_session.post(login_url, self.login_details, allow_redirects=True)
+
+        verification_token = self.browser_session.get(login_url).cookies['__RequestVerificationToken']
+
+        form_data = {'login.Email': self.email,
+                     'login.Password': self.password,
+                     '__RequestVerificationToken': verification_token}
+
+        page_post = self.browser_session.post(login_url, form_data, allow_redirects=True)
         if "Login failed" in page_post.text:
-            print("Login Failed")
-            raise RuntimeError
+            raise RuntimeError("Login Failed")
         return self.browser_session.get(timetable).text
 
     def main(self):
@@ -133,5 +131,19 @@ class AutoBooker:
 
 
 if __name__ == '__main__':
-    book_it_plz = AutoBooker()
+    email = os.environ.get('GYMBOX_EMAIL')
+    password = os.environ.get('GYMBOX_PASSWORD')
+
+    if not email or not password:
+        print("GYMBOX_EMAIL and GYMBOX_PASSWORD must both be present in the environment.\n"
+              "This can be done from the command line with:\n"
+              "export GYMBOX_EMAIL=youremail\n"
+              "export GYMBOX_PASSWORD=yourpassword\n\n"
+              "If you have a .bashrc file or equivalent, you can export them from there, and"
+              " won't need to remember to export them for every new terminal session.\n\n"
+              "You can also pass them directly when running the script, like so:\n"
+              "GYMBOX_EMAIL=youremail GYMBOX_PASSWORD=yourpassword python3 main.py")
+        exit(1)
+
+    book_it_plz = AutoBooker(email, password)
     book_it_plz.main()
