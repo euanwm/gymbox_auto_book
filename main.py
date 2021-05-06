@@ -5,9 +5,12 @@ import re
 import json
 import time
 import datetime
+from bs4 import BeautifulSoup
+import requests
 
 
 class AutoBooker:
+    """ Does what is says... """
     def __init__(self):
         self.login_details = {"login.Email": "xyz@gmail.com",
                               "login.Password": "abc"}
@@ -27,20 +30,24 @@ class AutoBooker:
                 token_array.append(nLines.split("value=\"")[1][:92:])
         return token_array
 
-    def generate_token(self, data_array):
-        token_value = data_array[1]
-        token_name = '__RequestVerificationToken'
-        return {token_name: token_value}
+    @staticmethod
+    def extract_token(login_response):
+        """ Checks GET response header, returns the verification token to allow a secure login """
+        return {'__RequestVerificationToken': login_response.cookies['__RequestVerificationToken']}
 
-    def extract_timetable(self, page_content):
-        html_timetable = ''
-        for nLines in page_content.splitlines():
-            if "Gym Entry Time" in nLines:
-                html_timetable = nLines
+    @staticmethod
+    def extract_timetable(page_content):
+        """ Returns the extracted raw html timetable from the class schedule page """
+        html_timetable = None
+        for line_values in page_content.splitlines():
+            if "Gym Entry Time" in line_values:
+                html_timetable = line_values
         return html_timetable
 
     # make this return a timetable with date, time, booking ID
-    def parse_timetable(self, raw_timetable):
+    @staticmethod
+    def parse_timetable(raw_timetable):
+        """ Takes raw html timetable and converts into an array """
         souper = BeautifulSoup(raw_timetable, 'html.parser')
         parsed_table = souper.find_all('table')
         gym_time = parsed_table[1]
@@ -49,17 +56,15 @@ class AutoBooker:
         date = ''
         class_booking_code = ''
         complete_timetable = []
-        for tr in gym_time:
-            table_row = tr.find_all('td')
+        for table_row in gym_time:
+            table_row = table_row.find_all('td')
             first_col = re.split('[><]', str(table_row[0]))
-            # '''
             # Time slots
             if len(first_col) == 13:
                 time_slot = first_col[4]
             # Date
             elif len(first_col) == 11:
                 date = first_col[6][2::]
-            # '''
             if len(table_row) > 1:
                 second_col = re.split('[><]', str(table_row[1]))
                 third_col = re.split('[><]', str(table_row[6]))
@@ -73,6 +78,7 @@ class AutoBooker:
         return complete_timetable
 
     def booking_handler(self, timetable_data):
+        """ Checks timetable data against the classes marked for booking and makes the booking """
         json_file = open('classes_config.json')
         my_classes = json.load(json_file)
 
@@ -80,6 +86,7 @@ class AutoBooker:
         future_date = (datetime.datetime.today() + seven_days).strftime('%d %B %Y')
         future_day_name = datetime.datetime.today().strftime('%A')
 
+        # ToDo: Refactor to reduce line length
         for timetable_entry in timetable_data:
             if future_day_name in my_classes:
                 if list(my_classes[future_day_name].keys())[0] == timetable_entry[2]:
@@ -111,11 +118,12 @@ class AutoBooker:
         self.browser_session.close()
 
     def login_get_timetable(self):
+        """ Logs into the members portal and extracts the raw timetable """
         self.browser_session = requests.session()
-        login_url = "https://gymbox.legendonlineservices.co.uk/enterprise/account/login"
-        timetable = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/MemberTimetable'
+        login_url = self.gymbox_main + "account/login"
+        timetable = self.gymbox_main + 'BookingsCentre/MemberTimetable'
         page_get = self.browser_session.get(login_url)
-        verification_token = self.generate_token(self.strip_token(page_get.text))
+        verification_token = self.extract_token(page_get)
         self.login_details.update(verification_token)
         page_post = self.browser_session.post(login_url, self.login_details, allow_redirects=True)
         if "Login failed" in page_post.text:
