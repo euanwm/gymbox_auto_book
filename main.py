@@ -1,7 +1,7 @@
+#!/usr/bin/env python
 import requests
 from bs4 import BeautifulSoup
 import re
-import lxml.html
 import json
 import time
 import datetime
@@ -9,13 +9,15 @@ import datetime
 
 class AutoBooker:
     def __init__(self):
-        self.login_details = {"login.Email": "user@email.com",
-                              "login.Password": "password"}
+        self.login_details = {"login.Email": "xyz@gmail.com",
+                              "login.Password": "abc"}
         # Set it to 1031 so that it doesn't jump the gun
-        self.BOOKING_TIME = '10:31'
+        self.BOOKING_TIME = '10:30'
         self.BOOKING_HOUR = self.BOOKING_TIME[:2:]
         # 23 hours and 55 mins
         self.WAIT_A_DAY = 86100
+        self.MAX_RETRIES = 5
+        self.WAIT_RETRY = 3
 
     def strip_token(self, raw_page_data):
         token_array = []
@@ -91,9 +93,21 @@ class AutoBooker:
         # Below is how the site makes bookings
         booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/AddBooking?booking='
         confirm_booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/Basket/Pay'
-        print(f"BOOKING : {class_data[2]} at {class_data[1]} on {class_data[0]}")
-        self.browser_session.get(f'{booking_url}{class_data[3]}')
-        self.browser_session.get(confirm_booking_url)
+        for attempt in range(self.MAX_RETRIES):
+            print(f"BOOKING ATTEMPT {attempt + 1} : {class_data[2]} ({class_data[3]}) at {class_data[1]} on {class_data[0]}")
+            self.browser_session.get(f'{booking_url}{class_data[3]}')
+            print("Added to basket...")
+            checkout_page = self.browser_session.get(confirm_booking_url)
+            print("Checked out...")
+            if "Your booking is now complete." in checkout_page.text:
+                print("Class booked successfully.")
+                break
+            else:
+                print("CLASS NOT BOOKED")
+                failed_page = open("failed_booking.html", "w")
+                failed_page.write(checkout.text)
+                failed_page.close()
+                time.sleep(self.WAIT_RETRY)
         self.browser_session.close()
 
     def login_get_timetable(self):
@@ -110,25 +124,35 @@ class AutoBooker:
         return self.browser_session.get(timetable).text
 
     def main(self):
+        print("### Autobooker started...")
         # Check/wait loop
         while True:
             cur_time = time.strftime('%H:%M')
             if self.BOOKING_TIME == cur_time:
+                print(f"Initiated booking at {cur_time}")
                 raw_timetable = self.login_get_timetable()
                 booking_timetable = self.parse_timetable(raw_timetable)
+
+                # Added for debugging shite
+                timetable_file = open("timetable_debug.txt", "w")
+                for tt_entries in booking_timetable:
+                    timetable_file.write(f"{tt_entries}\n")
+
                 self.booking_handler(booking_timetable)
-                print("BOOKED - Waiting until tomorrow...")
                 time.sleep(self.WAIT_A_DAY)
             # Waits on the run-up of the booking window
             elif self.BOOKING_HOUR == time.strftime('%H'):
-                print("Almost time to book...")
                 time.sleep(10)
             # Captures the initial startup
             else:
-                print(f"Waiting until {self.BOOKING_TIME}...")
-                time.sleep(30)
+                time.sleep(5)
 
+    def debug(self):
+            raw_timetable = self.login_get_timetable()
+            booking_timetable = self.parse_timetable(raw_timetable)
+            self.booking_handler(booking_timetable)
 
 if __name__ == '__main__':
     book_it_plz = AutoBooker()
+    #book_it_plz.debug()
     book_it_plz.main()
