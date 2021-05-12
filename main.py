@@ -1,6 +1,14 @@
 #!/usr/bin/env python
-import requests
-from bs4 import BeautifulSoup
+"""
+Gymbox has an excellent booking system however due to Gymbox not policing no-shows
+the open gym time slots are fully booked but with a poor turnout. I wrote this code
+to automate it for me sometime last year and made it public because fuck Gymbox.
+
+Put it on a Raspberry Pi, put in the time you want into the classes_config, run it. Done.
+
+I am not good at writing code.
+"""
+
 import re
 import json
 import time
@@ -12,23 +20,22 @@ import requests
 class AutoBooker:
     """ Does what is says... """
     def __init__(self):
-        self.login_details = {"login.Email": "xyz@gmail.com",
-                              "login.Password": "abc"}
-        # Set it to 1031 so that it doesn't jump the gun
+        self.LOGIN_DETAILS = {"login.Email": "email@email.com",
+                              "login.Password": "password"}
+        # It was 10:31 before everyone started to set their alarms
         self.BOOKING_TIME = '10:30'
         self.BOOKING_HOUR = self.BOOKING_TIME[:2:]
         # 23 hours and 55 mins
         self.WAIT_A_DAY = 86100
         self.MAX_RETRIES = 5
-        self.WAIT_RETRY = 3
-
-    def strip_token(self, raw_page_data):
-        token_array = []
-        for nLines in raw_page_data.splitlines():
-            if '__RequestVerificationToken' in nLines:
-                token_to_strip = nLines
-                token_array.append(nLines.split("value=\"")[1][:92:])
-        return token_array
+        # Seconds to wait before re-attempting a booking
+        self.WAIT_RETRY = 2
+        self.GYMBOX_URL = 'https://gymbox.legendonlineservices.co.uk/enterprise/'
+        self.LOGIN_URL = self.GYMBOX_URL + "account/login"
+        self.TIMETABLE_URL = self.GYMBOX_URL + 'BookingsCentre/MemberTimetable'
+        self.CONFIRM_BOOKING_URL = self.GYMBOX_URL + '/Basket/Pay'
+        self.BOOKING_URL = self.GYMBOX_URL + 'BookingsCentre/AddBooking?booking='
+        self.BROWSER_SESSION = None
 
     @staticmethod
     def extract_token(login_response):
@@ -43,6 +50,16 @@ class AutoBooker:
             if "Gym Entry Time" in line_values:
                 html_timetable = line_values
         return html_timetable
+
+    @staticmethod
+    def save_timetable(parsed_timetable):
+        """ Passes the results of the parsed timetable into a txt file """
+        current_time_date = time.strftime("%d%m%Y_%H%M")
+        filename = f"timetable_{current_time_date}.txt"
+        # Added for debugging shite
+        timetable_file = open(filename, "w")
+        for tt_entries in parsed_timetable:
+            timetable_file.write(f"{tt_entries}\n")
 
     # make this return a timetable with date, time, booking ID
     @staticmethod
@@ -93,18 +110,17 @@ class AutoBooker:
                     if my_classes[future_day_name][list(my_classes[future_day_name].keys())[0]] == timetable_entry[1]:
                         if future_date in timetable_entry[0]:
                             self.book_class(timetable_entry)
-        # This is so that you can edit the file between bookings
+        # Close the file after reading so you can keep the script running and make amendments
         json_file.close()
 
     def book_class(self, class_data):
-        # Below is how the site makes bookings
-        booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/BookingsCentre/AddBooking?booking='
-        confirm_booking_url = 'https://gymbox.legendonlineservices.co.uk/enterprise/Basket/Pay'
+        """ Takes the class ID then attempts to book it up to a maximum of attempts """
         for attempt in range(self.MAX_RETRIES):
-            print(f"BOOKING ATTEMPT {attempt + 1} : {class_data[2]} ({class_data[3]}) at {class_data[1]} on {class_data[0]}")
-            self.browser_session.get(f'{booking_url}{class_data[3]}')
+            print(f"BOOKING ATTEMPT {attempt + 1} : {class_data[2]} \
+             ({class_data[3]}) at {class_data[1]} on {class_data[0]}")
+            self.BROWSER_SESSION.get(f'{self.BOOKING_URL}{class_data[3]}')
             print("Added to basket...")
-            checkout_page = self.browser_session.get(confirm_booking_url)
+            checkout_page = self.BROWSER_SESSION.get(self.CONFIRM_BOOKING_URL)
             print("Checked out...")
             if "Your booking is now complete." in checkout_page.text:
                 print("Class booked successfully.")
@@ -112,40 +128,36 @@ class AutoBooker:
             else:
                 print("CLASS NOT BOOKED")
                 failed_page = open("failed_booking.html", "w")
-                failed_page.write(checkout.text)
+                failed_page.write(checkout_page.text)
                 failed_page.close()
                 time.sleep(self.WAIT_RETRY)
-        self.browser_session.close()
+        self.BROWSER_SESSION.close()
 
     def login_get_timetable(self):
         """ Logs into the members portal and extracts the raw timetable """
-        self.browser_session = requests.session()
-        login_url = self.gymbox_main + "account/login"
-        timetable = self.gymbox_main + 'BookingsCentre/MemberTimetable'
-        page_get = self.browser_session.get(login_url)
+        self.BROWSER_SESSION = requests.session()
+        page_get = self.BROWSER_SESSION.get(self.LOGIN_URL)
         verification_token = self.extract_token(page_get)
-        self.login_details.update(verification_token)
-        page_post = self.browser_session.post(login_url, self.login_details, allow_redirects=True)
+        self.LOGIN_DETAILS.update(verification_token)
+        page_post = self.BROWSER_SESSION.post(self.LOGIN_URL, self.LOGIN_DETAILS, allow_redirects=True)
         if "Login failed" in page_post.text:
             print("Login Failed")
             raise RuntimeError
-        return self.browser_session.get(timetable).text
+        return self.BROWSER_SESSION.get(self.TIMETABLE_URL).text
 
     def main(self):
+        """ Main running loop """
         print("### Autobooker started...")
         # Check/wait loop
         while True:
+            # ToDo: Calculate sleep time until the next applicable booking window
             cur_time = time.strftime('%H:%M')
+            cur_time_secs = time.strftime('%H:%M:%S')
             if self.BOOKING_TIME == cur_time:
-                print(f"Initiated booking at {cur_time}")
+                print(f"Initiated booking at {cur_time_secs}")
                 raw_timetable = self.login_get_timetable()
                 booking_timetable = self.parse_timetable(raw_timetable)
-
-                # Added for debugging shite
-                timetable_file = open("timetable_debug.txt", "w")
-                for tt_entries in booking_timetable:
-                    timetable_file.write(f"{tt_entries}\n")
-
+                self.save_timetable(booking_timetable)
                 self.booking_handler(booking_timetable)
                 time.sleep(self.WAIT_A_DAY)
             # Waits on the run-up of the booking window
@@ -156,9 +168,10 @@ class AutoBooker:
                 time.sleep(5)
 
     def debug(self):
-            raw_timetable = self.login_get_timetable()
-            booking_timetable = self.parse_timetable(raw_timetable)
-            self.booking_handler(booking_timetable)
+        """ Skips out the timing/scheduling loop """
+        raw_timetable = self.login_get_timetable()
+        booking_timetable = self.parse_timetable(raw_timetable)
+        self.save_timetable(booking_timetable)
 
 if __name__ == '__main__':
     book_it_plz = AutoBooker()
